@@ -1,3 +1,4 @@
 .env
 credentials.json
 old/
+node_modules/
