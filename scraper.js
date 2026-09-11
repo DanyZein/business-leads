@@ -144,7 +144,7 @@ async function appendToSheet(leads) {
   const sheetName = TARGET_STATES[0];
 
   const existing = await sheets.spreadsheets.values.get({
-    spreadsheetId: "1hKbixQHN_vKxgy91w2kjvTppYHSGc2k4tqW-V69thP0",
+    spreadsheetId: process.env.SPREADSHEET_ID,
     range: `${sheetName}!A:A`,
   });
   const startRow = (existing.data.values || []).length + 1; // next empty row
@@ -200,7 +200,7 @@ async function appendToSheet(leads) {
   });
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: "1hKbixQHN_vKxgy91w2kjvTppYHSGc2k4tqW-V69thP0",
+    spreadsheetId: process.env.SPREADSHEET_ID,
     range: `${sheetName}!A2`,
     // range: "Ohio!A2",
     valueInputOption: "USER_ENTERED",
