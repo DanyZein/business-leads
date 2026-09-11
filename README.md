@@ -293,7 +293,7 @@ clock, not a timestamp of when the lead was scraped.
 ## Running it
 
 ```bash
-node index.js
+node scraper.js
 ```
 
 Or via npm:
@@ -301,7 +301,7 @@ Or via npm:
 ```json
 {
   "scripts": {
-    "start": "node index.js"
+    "start": "node scraper.js"
   }
 }
 ```
@@ -313,7 +313,7 @@ npm start
 Run it from the project root. The `keyFile: "credentials.json"` path in the
 Google auth block is resolved relative to the **working directory**, not the
 script file, so running it from elsewhere breaks authentication. Running
-`node scraper/index.js` from a parent folder will fail for this reason.
+`node scraper/scraper.js` from a parent folder will fail for this reason.
 
 Expected console output:
 
