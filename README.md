@@ -126,7 +126,7 @@ you learn which platforms your market actually uses (see
 ### 1. Install dependencies
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/DanyZein/business-leads.git
 cd business-leads
 npm install axios googleapis dotenv
 ```
