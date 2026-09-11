@@ -126,7 +126,7 @@ you learn which platforms your market actually uses (see
 ### 1. Install dependencies
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/DanyZein/business-leads.git
 cd business-leads
 npm install axios googleapis dotenv
 ```
@@ -222,7 +222,7 @@ gives worse results for those.
 
 | File                                 | Committed? | Purpose                       |
 | ------------------------------------ | ---------- | ----------------------------- |
-| `index.js` (or your filename)        | Yes        | Main scraper                  |
+| `scraper.js`                         | Yes        | Main scraper                  |
 | `cities.js`                          | Yes        | State to city-list lookup     |
 | `package.json` / `package-lock.json` | Yes        | Dependencies                  |
 | `.env`                               | **No**     | `MAPS_API_KEY`                |
@@ -293,7 +293,7 @@ clock, not a timestamp of when the lead was scraped.
 ## Running it
 
 ```bash
-node index.js
+node scraper.js
 ```
 
 Or via npm:
@@ -301,7 +301,7 @@ Or via npm:
 ```json
 {
   "scripts": {
-    "start": "node index.js"
+    "start": "node scraper.js"
   }
 }
 ```
@@ -313,7 +313,7 @@ npm start
 Run it from the project root. The `keyFile: "credentials.json"` path in the
 Google auth block is resolved relative to the **working directory**, not the
 script file, so running it from elsewhere breaks authentication. Running
-`node scraper/index.js` from a parent folder will fail for this reason.
+`node scraper/scraper.js` from a parent folder will fail for this reason.
 
 Expected console output:
 
@@ -644,4 +644,24 @@ that apply where you and your leads are located.
 
 ## License
 
-Add your preferred license here (MIT is a common choice for a project like this).
+MIT License
+
+Copyright (c) 2026 Dany Zein
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
