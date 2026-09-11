@@ -222,7 +222,7 @@ gives worse results for those.
 
 | File                                 | Committed? | Purpose                       |
 | ------------------------------------ | ---------- | ----------------------------- |
-| `index.js` (or your filename)        | Yes        | Main scraper                  |
+| `scraper.js`                         | Yes        | Main scraper                  |
 | `cities.js`                          | Yes        | State to city-list lookup     |
 | `package.json` / `package-lock.json` | Yes        | Dependencies                  |
 | `.env`                               | **No**     | `MAPS_API_KEY`                |
