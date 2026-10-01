@@ -1,19 +1,22 @@
 {
-  "name": "restaurant-leads",
+  "name": "business-leads",
   "version": "1.0.0",
-  "description": "",
-  "main": "run.js",
+  "description": "Finds local businesses with no website (or only a social/DIY page) via the Google Places API and appends them as leads to a Google Sheet.",
+  "main": "scraper.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node scraper.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "google-places",
+    "leads",
+    "google-sheets",
+    "scraper"
+  ],
+  "author": "Dany Zein",
+  "license": "MIT",
   "dependencies": {
     "axios": "^1.13.2",
-    "cities.json": "^1.1.50",
     "dotenv": "^17.2.3",
-    "googleapis": "^170.0.0",
-    "open": "^11.0.0"
+    "googleapis": "^170.0.0"
   }
 }
