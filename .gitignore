@@ -2,3 +2,7 @@
 credentials.json
 old/
 node_modules/
+
+# Local-only backup of the pre-rewrite history. Contains the old credentials,
+# so it must never be published.
+*.bundle
