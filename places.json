@@ -1,0 +1,114 @@
+{
+  "name": "places/ChIJ8WvuSB7Lj4ARFyHppkxDRQ4",
+  "displayName": {
+    "text": "Macy's",
+    "languageCode": "en"
+  },
+  "addressDescriptor": {
+    "landmarks": [
+      {
+        "name": "places/ChIJVVVVUB7Lj4ARXyb4HFVDV8s",
+        "placeId": "ChIJVVVVUB7Lj4ARXyb4HFVDV8s",
+        "displayName": {
+          "text": "Westfield Valley Fair",
+          "languageCode": "en"
+        },
+        "types": [
+          "clothing_store",
+          "department_store",
+          "establishment",
+          "food",
+          "movie_theater",
+          "point_of_interest",
+          "restaurant",
+          "shoe_store",
+          "shopping_mall",
+          "store"
+        ],
+        "spatialRelationship": "WITHIN",
+        "straightLineDistanceMeters": 220.29175
+      },
+      {
+        "name": "places/ChIJ62_oCR7Lj4AR_MGWkSPotD4",
+        "placeId": "ChIJ62_oCR7Lj4AR_MGWkSPotD4",
+        "displayName": {
+          "text": "Nordstrom",
+          "languageCode": "en"
+        },
+        "types": [
+          "clothing_store",
+          "department_store",
+          "establishment",
+          "point_of_interest",
+          "shoe_store",
+          "store"
+        ],
+        "straightLineDistanceMeters": 329.45178
+      },
+      {
+        "name": "places/ChIJmx1c5x7Lj4ARJXJy_CU_JbE",
+        "placeId": "ChIJmx1c5x7Lj4ARJXJy_CU_JbE",
+        "displayName": {
+          "text": "Monroe Parking Garage",
+          "languageCode": "en"
+        },
+        "types": ["establishment", "parking", "point_of_interest"],
+        "straightLineDistanceMeters": 227.05153
+      },
+      {
+        "name": "places/ChIJxcwBziHLj4ARUQLAvtzkRCM",
+        "placeId": "ChIJxcwBziHLj4ARUQLAvtzkRCM",
+        "displayName": {
+          "text": "Studios Inn by Daiwa Living California Inc.",
+          "languageCode": "en"
+        },
+        "types": [
+          "establishment",
+          "lodging",
+          "point_of_interest",
+          "real_estate_agency"
+        ],
+        "straightLineDistanceMeters": 299.9955
+      },
+      {
+        "name": "places/ChIJWWIlNx7Lj4ARpe1E0ob-_GI",
+        "placeId": "ChIJWWIlNx7Lj4ARpe1E0ob-_GI",
+        "displayName": {
+          "text": "Din Tai Fung",
+          "languageCode": "en"
+        },
+        "types": ["establishment", "food", "point_of_interest", "restaurant"],
+        "straightLineDistanceMeters": 157.70943
+      }
+    ],
+    "areas": [
+      {
+        "name": "places/ChIJb3F-EB7Lj4ARnHApQ_Hu1gI",
+        "placeId": "ChIJb3F-EB7Lj4ARnHApQ_Hu1gI",
+        "displayName": {
+          "text": "Westfield Valley Fair",
+          "languageCode": "en"
+        },
+        "containment": "WITHIN"
+      },
+      {
+        "name": "places/ChIJXYuykB_Lj4AR1Ot8nU5q26Q",
+        "placeId": "ChIJXYuykB_Lj4AR1Ot8nU5q26Q",
+        "displayName": {
+          "text": "Valley Fair",
+          "languageCode": "en"
+        },
+        "containment": "WITHIN"
+      },
+      {
+        "name": "places/ChIJtYoUX2DLj4ARKoKOb1G0CpM",
+        "placeId": "ChIJtYoUX2DLj4ARKoKOb1G0CpM",
+        "displayName": {
+          "text": "Central San Jose",
+          "languageCode": "en"
+        },
+        "containment": "WITHIN"
+      }
+    ]
+  }
+}
