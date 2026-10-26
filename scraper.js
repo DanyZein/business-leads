@@ -3,38 +3,90 @@ const { google } = require("googleapis");
 const fs = require("fs");
 
 const citiesData = require("./cities.js");
-// const { places } = require("googleapis/build/src/apis/places/index.js");
 require("dotenv").config();
 
-// files
+// ---------- Config ----------
+
+const TARGET_STATES = ["Lebanon"];
+const SHEET_NAME = TARGET_STATES[0];
+
+// Each term is its own job. Keep terms short and canonical.
+const SEARCH_TERMS = [
+  // Tier 1: dental / aesthetic / medical
+  "dental clinic",
+  "dentist",
+  "dermatology clinic",
+  "plastic surgery clinic",
+  "aesthetic clinic",
+  "medical center",
+
+  // Tier 2: solar / construction
+  "solar panel installer",
+  "roofing contractor",
+  "waterproofing",
+  "insulation contractor",
+  "interior fit out",
+  "aluminum and glass",
+
+  // Tier 3: real estate
+  "real estate agency",
+  "real estate developer",
+
+  // Volume filler
+  "restaurant",
+  "cafe",
+  "salon",
+
+  // Arabic variants
+  "عيادة أسنان",
+  "عزل مائي",
+  "تسقيف",
+];
+
+// Free-tier guardrail.
+// Text Search (New) is a Pro SKU (5,000 free/month) as long as you do NOT
+// request Enterprise-only fields like rating or userRatingCount.
+// 100/day × 30 ≈ 3,000, leaving headroom for retries and other states.
+const DAILY_CALL_LIMIT = 30;
+
+// ---------- Files ----------
 const SEEN_LEADS_FILE = "seen_leads.json";
-const PROGRESS_FILE = "progress.json";
+const PROGRESS_FILE = `progress_${SHEET_NAME}.json`;
+const QUOTA_FILE = "quota.json";
 
-const TARGET_STATES = ["Maryland"];
-
-const business = "Roofers";
-
+// ---------- Sheets auth ----------
 const auth = new google.auth.GoogleAuth({
   keyFile: "credentials.json",
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
+// ---------- Helpers ----------
 const loadJSON = (file, defaultVal) =>
   fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : defaultVal;
 const saveJSON = (file, data) =>
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-// --- THE FLATTENER ---
-// This turns your complex object into a simple ["City, State"] list
-function getCityList(targetStates = []) {
-  let flatList = [];
+function callsLeft() {
+  const today = new Date().toISOString().slice(0, 10);
+  const q = loadJSON(QUOTA_FILE, { date: today, used: 0 });
+  if (q.date !== today) {
+    q.date = today;
+    q.used = 0;
+  }
+  return { q, left: DAILY_CALL_LIMIT - q.used };
+}
+function spendCall() {
+  const { q } = callsLeft();
+  q.used++;
+  saveJSON(QUOTA_FILE, q);
+}
 
-  // If TARGET_STATES is empty, it uses ALL states in the file
+function getCityList(targetStates = []) {
+  const flatList = [];
   const statesToProcess =
     targetStates.length > 0 ? targetStates : Object.keys(citiesData);
 
   statesToProcess.forEach((state) => {
-    // This works whether the key is "New York" or Alabama
     if (citiesData[state]) {
       citiesData[state].forEach((city) => {
         flatList.push(`${city}, ${state}`);
@@ -42,90 +94,98 @@ function getCityList(targetStates = []) {
     }
   });
 
-  // CRITICAL: Sort ensures the order never changes between runs
   return flatList.sort();
 }
 
-// ... [Insert your existing getLeadsForCity and appendToSheet functions here] ...
-// (They don't need to change)
-
-async function getLeadsForCity(cityName) {
-  // new addition
+// ---------- Scraper ----------
+async function getLeadsForQuery(cityName, term) {
   let completedSuccessfully = true;
-
-  let allProcessedIds = [];
-  let targetLeadsForCity = [];
+  const allProcessedIds = [];
+  const targetLeadsForCity = [];
   let nextToken = null;
-
-  let emptyRetries = 0;
 
   const seenIds = new Set(loadJSON(SEEN_LEADS_FILE, []));
 
-  console.log(`--- Starting City: ${cityName} ---`);
+  let emptyRetries = 0;
+  const MAX_EMPTY_RETRIES = 2;
+
+  console.log(`--- ${term} | ${cityName} ---`);
 
   do {
     const url = "https://places.googleapis.com/v1/places:searchText";
     const headers = {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": process.env.MAPS_API_KEY,
+      // Pro-tier fields only. Do NOT add places.rating or
+      // places.userRatingCount here — that would push every request
+      // into the 1,000-call Enterprise bucket.
       "X-Goog-FieldMask":
-        "places.id,places.displayName,places.websiteUri,places.internationalPhoneNumber,places.formattedAddress,places.utcOffsetMinutes,places.primaryTypeDisplayName,nextPageToken",
+        "places.id,places.displayName,places.websiteUri," +
+        "places.internationalPhoneNumber,places.formattedAddress," +
+        "places.utcOffsetMinutes,places.primaryTypeDisplayName," +
+        "places.businessStatus,nextPageToken",
     };
 
     const body = {
-      textQuery: `${business} in ${cityName}`, // Uses the "City, State" format
+      textQuery: `${term} in ${cityName}`,
       pageToken: nextToken,
+      regionCode: "LB",
+      languageCode: "en",
     };
 
     try {
+      spendCall();
       const response = await axios.post(url, body, { headers });
       const places = response.data.places || [];
 
-      const MAX_EMPTY_RETRIES = 3;
-
-      // inside the try block, replace the empty page check:
       if (places.length === 0 && nextToken) {
         emptyRetries++;
         console.log(
-          `Empty page, retrying token... (${emptyRetries}/${MAX_EMPTY_RETRIES})`,
+          `  empty page, retrying token (${emptyRetries}/${MAX_EMPTY_RETRIES})...`,
         );
         if (emptyRetries >= MAX_EMPTY_RETRIES) {
-          console.log(
-            `Giving up on token after ${MAX_EMPTY_RETRIES} retries, moving on.`,
-          );
-          nextToken = null; // kills the loop
+          console.log("  giving up on this token, moving on.");
+          nextToken = null;
           break;
         }
         await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
 
-      places.forEach((p) => {
-        if (!seenIds.has(p.id)) {
-          const site = p.websiteUri || "";
-          const isTarget =
-            !site ||
-            site.includes("sites.google.com") ||
-            site.includes("linktr.ee") ||
-            site.includes("wixsite.com") ||
-            site.includes("square.site") ||
-            site.includes("toasttab.com") ||
-            site.includes("menupix.com") ||
-            site.includes("fb.me") ||
-            site.includes("m.facebook.com") ||
-            site.includes("facebook.com") ||
-            site.includes("instagram.com");
+      emptyRetries = 0;
 
-          if (isTarget) {
-            targetLeadsForCity.push(p);
-          }
-          allProcessedIds.push(p.id);
+      places.forEach((p) => {
+        if (seenIds.has(p.id)) return;
+
+        const site = p.websiteUri || "";
+        const weakSite =
+          !site ||
+          site.includes("sites.google.com") ||
+          site.includes("linktr.ee") ||
+          site.includes("wixsite.com") ||
+          site.includes("square.site") ||
+          site.includes("toasttab.com") ||
+          site.includes("menupix.com") ||
+          site.includes("fb.me") ||
+          site.includes("m.facebook.com") ||
+          site.includes("facebook.com") ||
+          site.includes("instagram.com");
+
+        // Review count removed to stay in the Pro SKU.
+        // Still require a phone and an open business.
+        const realBusiness =
+          !!p.internationalPhoneNumber &&
+          p.businessStatus !== "CLOSED_PERMANENTLY";
+
+        if (weakSite && realBusiness) {
+          targetLeadsForCity.push({ ...p, _term: term });
         }
+        allProcessedIds.push(p.id);
       });
 
       nextToken = response.data.nextPageToken;
       if (nextToken) {
-        console.log(`Fetched batch...`);
+        console.log("  fetched batch, following nextPageToken...");
         await new Promise((r) => setTimeout(r, 2000));
       }
     } catch (error) {
@@ -138,132 +198,121 @@ async function getLeadsForCity(cityName) {
   return { targetLeadsForCity, allProcessedIds, completedSuccessfully };
 }
 
+// ---------- Sheets ----------
 async function appendToSheet(leads) {
   if (leads.length === 0) return;
   const sheets = google.sheets({ version: "v4", auth });
-  const sheetName = TARGET_STATES[0];
 
-  const existing = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${sheetName}!A:A`,
-  });
-  const startRow = (existing.data.values || []).length + 1; // next empty row
-
-  const rows = leads.map((lead, i) => {
-    const rowNum = startRow + i;
-
+  const rows = leads.map((lead) => {
     const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
       lead.displayName.text,
     )}&query_place_id=${lead.id}`;
     const clickableAddress = `=HYPERLINK("${mapsUrl}", "${lead.formattedAddress}")`;
 
-    //! old working timeformula without accounting for dst
-    // const timeFormula = `=NOW() + (${lead.utcOffsetMinutes} / 1440)`;
-    // const timeFormula = `=NOW() + (${utcCol}${rowNumber}/1440) + (${dstAdjCell}/1440)`;
-
-    const timeFormula = `=NOW() + (AA${rowNum}/1440) + ($AC$2/1440)`;
-
     return [
-      lead.displayName.text, //A
+      lead.displayName.text, // A
       lead.internationalPhoneNumber
         ? `'${lead.internationalPhoneNumber}`
-        : "N/A", //B
-      clickableAddress, //C
-      "", //D
-      "", //E
-      lead.websiteUri || "NO WEBSITE", //F
-      timeFormula, //G
-      "Not Contacted", //H
-      "", //I
-      "", //J
-      "", //k
-      "", //L
-      lead.primaryTypeDisplayName?.text || "Unknown", //M
-      "", // N <-- new
-      "", //O
-      "", //P
-      "", //Q
-      "", //R
-      "", //S
-      "", //T
-      "", //U
-      "", //V
-      "", //W
-      "", //X
-      "", //Y
-      "", //Z
-      lead.utcOffsetMinutes, //AA
-      lead.id, //AB
-      //AC
-      ,
+        : "N/A", // B
+      clickableAddress, // C
+      "", // D
+      "", // E
+      lead.websiteUri || "NO WEBSITE", // F
+      "Not Contacted", // G  ← moved from H
+      "", // H
+      "", // I
+      "", // J
+      "", // K
+      lead.primaryTypeDisplayName?.text || "Unknown", // L  ← moved from M
+      lead._term || "", // M  ← search term
+      ...Array(9).fill(""), // N–Y (12 empties)
+      lead.id, // Z  ← place ID moved from AB
     ];
   });
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${sheetName}!A2`,
-    // range: "Ohio!A2",
+    range: `${SHEET_NAME}!A2`,
     valueInputOption: "USER_ENTERED",
     resource: { values: rows },
   });
 }
 
-// --- THE MAIN LOOP ---
+// ---------- Main ----------
 (async () => {
-  // 1. Generate the Master List
   const myCities = getCityList(TARGET_STATES);
   console.log(
     `Loaded ${myCities.length} cities for: ${TARGET_STATES.join(", ")}`,
   );
 
-  // 2. Load the "Bookmark"
-  let progress = loadJSON(PROGRESS_FILE, { lastCityIndex: 0 });
+  const jobs = [];
+  myCities.forEach((city) => {
+    SEARCH_TERMS.forEach((term) => jobs.push({ city, term }));
+  });
+  console.log(
+    `Total jobs: ${jobs.length} (${myCities.length} cities × ${SEARCH_TERMS.length} terms)`,
+  );
+
+  let progress = loadJSON(PROGRESS_FILE, { lastJobIndex: 0 });
+  if (
+    progress.lastCityIndex !== undefined ||
+    typeof progress.lastJobIndex !== "number"
+  ) {
+    console.log(
+      "Old progress format detected — resetting progress. (Job list changed.)",
+    );
+    progress = { lastJobIndex: 0 };
+    saveJSON(PROGRESS_FILE, progress);
+  }
+
   let seenIds = loadJSON(SEEN_LEADS_FILE, []);
 
-  // 3. Resume exactly where we left off
-  // If progress.lastCityIndex is 5, loop starts at i = 5
-  for (let i = progress.lastCityIndex; i < myCities.length; i++) {
-    const city = myCities[i];
+  for (let i = progress.lastJobIndex; i < jobs.length; i++) {
+    const { city, term } = jobs[i];
 
-    // Run the scraper for this city
+    if (callsLeft().left < 5) {
+      console.log("Daily call limit reached, stopping for today.");
+      break;
+    }
+
     const { targetLeadsForCity, allProcessedIds, completedSuccessfully } =
-      await getLeadsForCity(city);
+      await getLeadsForQuery(city, term);
 
     if (!completedSuccessfully) {
-      console.log(`❌ City failed, retrying later: ${city}`);
-      break; // do NOT update progress or seen IDs
+      console.log(`❌ Job failed, will retry later: ${term} | ${city}`);
+      break;
     }
 
-    // Save Logic
     if (targetLeadsForCity.length > 0) {
-      await appendToSheet(targetLeadsForCity);
-      console.log(
-        `✅ Success: Added ${targetLeadsForCity.length} leads for ${city}.`,
-      );
+      try {
+        await appendToSheet(targetLeadsForCity);
+        console.log(
+          `✅ Added ${targetLeadsForCity.length} leads (${term} | ${city}).`,
+        );
+      } catch (e) {
+        console.error(
+          `Sheet write failed for ${term} | ${city}:`,
+          e.message,
+        );
+        break;
+      }
     } else {
-      console.log(`ℹ️ No new leads found for ${city}.`);
+      console.log(`ℹ️ No new leads (${term} | ${city}).`);
     }
 
-    // Update Memory (Seen IDs)
     const updatedSeenIds = [...new Set([...seenIds, ...allProcessedIds])];
-    saveJSON(SEEN_LEADS_FILE, [...updatedSeenIds]);
-    seenIds = [...updatedSeenIds];
-    // const updatedSeenIds = [...new Set([...seenIds, ...allProcessedIds])];
-    // saveJSON(SEEN_LEADS_FILE, updatedSeenIds);
-    // seenIds = updatedSeenIds;
+    saveJSON(SEEN_LEADS_FILE, updatedSeenIds);
+    seenIds = updatedSeenIds;
 
-    // Update Progress (The Bookmark)
-    // We save (i + 1) so next time we start at the NEXT city
-    progress.lastCityIndex = i + 1;
+    progress.lastJobIndex = i + 1;
     saveJSON(PROGRESS_FILE, progress);
 
     console.log(
-      `Progress saved. Completed ${i + 1}/${myCities.length} cities.`,
+      `Progress saved: ${i + 1}/${jobs.length} jobs (${city} × ${term}).`,
     );
 
-    // Sleep to prevent rate limits
     await new Promise((r) => setTimeout(r, 2000));
   }
 
-  console.log("All cities in target list finished!");
+  console.log("Done (or hit the daily limit).");
 })();
