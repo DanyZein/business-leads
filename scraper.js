@@ -15,7 +15,7 @@ const marketConfig = {
   US: {
     regionCode: "US",
     languageCode: "en",
-    dailyCallLimit: 100,
+    dailyCallLimit: 30,
     searchTerms: [
       // Tier 1: dental / aesthetic / medical
       "dental clinic",

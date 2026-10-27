@@ -49,32 +49,28 @@ Places Text Search (New)   "Roofers in Baltimore, Maryland"
 isTarget() filter  -->  no website  OR  DIY / social platform domain
     |
     v
-seen_leads.json dedupe  -->  skip any Place ID already processed
+seen_leads_<market>.json dedupe  -->  skip any Place ID already processed (global per market)
     |
     v
-appendToSheet()  -->  Google Sheets API
+appendToSheet()  -->  Google Sheets API (per-state tab, auto-created)
     |
     v
-progress.json  -->  checkpoint: index of the next city to process
+progress_<state>_<market>.json  -->  checkpoint: index of the next job (city × term) for this state
 ```
 
 Step by step:
 
-1. **Build the city list.** `getCityList()` flattens the `cities.js` object into
-   a sorted array of `"City, State"` strings. Sorting matters: it guarantees the
-   same order on every run, which is what makes the index-based checkpoint in
-   `progress.json` valid.
-2. **Search.** For each city, POST to
-   `https://places.googleapis.com/v1/places:searchText` with
-   `textQuery: "<business> in <City, State>"`.
-3. **Paginate.** Follows `nextPageToken` until the city is exhausted, pausing
-   2 seconds between pages.
-4. **Filter.** Keeps only places that match the target profile (see below).
-5. **Dedupe.** Any Place ID already present in `seen_leads.json` is skipped.
-6. **Append.** Matching leads are written to the Google Sheet in one batch per
-   city.
-7. **Checkpoint.** `progress.json` is updated to the index of the next city, so
-   the next run resumes instead of starting over.
+1. **Select states.** `getTargetStates()` reads CLI args, `STATE` env var, or defaults to all states for the market.
+2. **Build the city list per state.** `getCityList()` flattens `cities.js` into a sorted array of `{city, state, key}` objects. Sorting by state then city guarantees deterministic job ordering.
+3. **Generate jobs per state.** For each state, create the Cartesian product: every city × every search term = one job.
+4. **Resume from state checkpoint.** Load `progress_<state>_<market>.json` (e.g., `progress_Maryland_us.json`), resume from `lastJobIndex`.
+5. **Search.** For each job, POST to `https://places.googleapis.com/v1/places:searchText` with `textQuery: "<term> in <City, State>"`.
+6. **Paginate.** Follows `nextPageToken` until exhausted, pausing 2 seconds between pages.
+7. **Filter.** Keeps only places that match the target profile (see below).
+8. **Global dedupe (per market).** Any Place ID already in `seen_leads_<market>.json` is skipped.
+9. **Append to per-state tab.** Matching leads written to a sheet tab named after the state (auto-created if missing).
+10. **Update global dedupe.** Save updated `seen_leads_<market>.json` with all processed Place IDs.
+11. **Checkpoint per state.** Update `progress_<state>_<market>.json` with `lastJobIndex = i + 1`.
 
 The Requests use a field mask, so only the fields the script needs are billed
 and returned: `places.id`, `places.displayName`, `places.websiteUri`,
@@ -219,6 +215,8 @@ Everything you normally touch is at the top of the main script:
 - 17 English search terms (medical, construction, real estate, volume)
 - Region code: `US`, Language: `en`
 - Daily call limit: 100
+- **Per-state architecture:** Each state writes to its own sheet tab (auto-created) and uses a separate progress checkpoint file (e.g., `progress_Maryland_us.json`)
+- Run with: `pnpm start:us`, `pnpm start:ca`, `pnpm start:md`, or manual: `MARKET=US STATE="California,Texas" pnpm start`
 
 **Lebanon Market** (`MARKET=LEBANON`):
 - 1 region (Lebanon) with 31 cities (tiered by density/affluence)
@@ -226,20 +224,36 @@ Everything you normally touch is at the top of the main script:
 - 20 search terms (17 English + 3 Arabic variants)
 - Region code: `LB`, Language: `en`
 - Daily call limit: 30
+- **Per-state architecture:** Lebanon is a single region with its own sheet tab and checkpoint (`progress_Lebanon_lebanon.json`)
+- Run with: `pnpm start:lb` (or `MARKET=LEBANON pnpm start`)
 
 ### Switching Markets
 
 ```bash
-# Run for US market
-MARKET=US node scraper.js
+# Lebanon market (all cities)
+pnpm start:lb
 
-# Run for Lebanon market (default)
-node scraper.js
-# or explicitly:
-MARKET=LEBANON node scraper.js
+# US market - all states
+pnpm start:us
+
+# US market - specific states (recommended for faster, targeted runs)
+pnpm start:md    # Maryland
+pnpm start:ca    # California
+pnpm start:tx    # Texas
+pnpm start:top5  # Top 5 states by city count
+pnpm start:top10 # Top 10 states by city count
 ```
 
-Each market maintains its own state files (`seen_leads_<market>.json`, `progress_<market>.json`, `quota_<market>.json`), so you can switch between markets without losing progress.
+Or manually via CLI/env:
+```bash
+# US with specific states (comma-separated)
+MARKET=US STATE="California,Texas,Florida" pnpm start
+
+# Lebanon
+MARKET=LEBANON pnpm start
+```
+
+Each market maintains its own state files (`seen_leads_<market>.json`, `.data/quota_<market>.json`), and each state has its own progress checkpoint (`.data/progress_<state>_<market>.json`), so you can run different markets and different states simultaneously without conflicts.
 
 Rename `SEARCH_TERMS` to whatever you are selling into. Good candidates:
 `"Roofers"`, `"Restaurants"`, `"Dentists"`, `"Plumbers"`, `"Landscapers"`,
@@ -258,13 +272,13 @@ gives worse results for those.
 | ------------------------------------ | ---------- | ----------------------------- |
 | `scraper.js`                         | Yes        | Main scraper                  |
 | `cities.js`                          | Yes        | State/region to city-list lookup (US + Lebanon) |
-| `package.json` / `package-lock.json` | Yes        | Dependencies                  |
-| `.env`                               | **No**     | `MAPS_API_KEY`                |
+| `package.json` / `pnpm-lock.yaml`    | Yes        | Dependencies                  |
+| `.env`                               | **No**     | `MAPS_API_KEY`, `SPREADSHEET_ID` |
 | `credentials.json`                   | **No**     | Service account private key   |
-| `node_modules/`                      | **No**     | Regenerable via `npm install` |
-| `seen_leads_<market>.json`           | Your call  | Dedupe memory per market      |
-| `progress_<market>.json`             | Your call  | Resume checkpoint per market  |
-| `quota_<market>.json`                | Your call  | Daily API call tracking per market |
+| `node_modules/`                      | **No**     | Regenerable via `pnpm install` |
+| `.data/seen_leads_<market>.json`     | Your call  | Global dedupe per market (all states) |
+| `.data/progress_<state>_<market>.json` | Your call | Per-state resume checkpoint  |
+| `.data/quota_<market>.json`          | Your call  | Daily API call tracking per market |
 
 ### `cities.js` shape
 
@@ -327,100 +341,117 @@ clock, not a timestamp of when the lead was scraped.
 
 ## Running it
 
-### Lebanon Market (default)
+### Quick start (npm scripts)
+
+The easiest way to run specific states or markets is via the npm scripts in `package.json`:
+
 ```bash
-node scraper.js
+# Lebanon market (all cities)
+pnpm start:lb
+
+# US market - all 51 states
+pnpm start:us
+
+# US market - specific states (most popular)
+pnpm start:md     # Maryland
+pnpm start:ca     # California
+pnpm start:tx     # Texas
+pnpm start:fl     # Florida
+pnpm start:ny     # New York
+
+# US market - top 5 / top 10 states by city count
+pnpm start:top5
+pnpm start:top10
+```
+
+### Manual CLI / env var
+
+```bash
+# Lebanon market (default)
+pnpm start
 # or explicitly:
-MARKET=LEBANON node scraper.js
+MARKET=LEBANON pnpm start
+
+# US market - all states
+MARKET=US pnpm start
+
+# US market - specific states (comma-separated)
+MARKET=US STATE="California,Texas,Florida" pnpm start
+
+# US market - specific states via CLI args
+pnpm start California Texas Florida
 ```
 
-### US Market
-```bash
-MARKET=US node scraper.js
-```
+### Why pnpm?
 
-Or via npm:
-```json
-{
-  "scripts": {
-    "start": "node scraper.js",
-    "start:us": "MARKET=US node scraper.js",
-    "start:lb": "MARKET=LEBANON node scraper.js"
-  }
-}
-```
+This project uses **pnpm** (not npm) for dependency management. `pnpm install` creates a non-flat `node_modules` with symlinks, which is faster and disk-efficient. The `pnpm-lock.yaml` is the lockfile. Run scripts with `pnpm run <script>` or just `pnpm <script>`. `npm run` will also work but may have subtle differences in module resolution.
 
-```bash
-npm start        # Lebanon
-npm run start:us # US
-npm run start:lb # Lebanon
-```
-
-Run it from the project root. The `keyFile: "credentials.json"` path in the
-Google auth block is resolved relative to the **working directory**, not the
-script file, so running it from elsewhere breaks authentication.
-
-Expected console output (Lebanon):
+### Expected console output (Lebanon):
 ```
 === Market: LEBANON ===
-Target states: 1
+Target states: Lebanon
 Search terms: 20
-Region code: LB
-Daily call limit: 30
-Loaded 31 cities for: Lebanon
-Total jobs: 620 (31 cities × 20 terms)
+Region: LB | Daily limit: 30
+Total cities: 31
+
+========== STATE: Lebanon (31 cities) ==========
+Jobs for Lebanon: 620 (31 cities × 20 terms)
 --- dental clinic | Adma, Lebanon ---
 ...
 ```
 
-Expected console output (US):
+### Expected console output (US - Maryland):
 ```
 === Market: US ===
-Target states: 51
+Target states: Maryland
 Search terms: 17
-Region code: US
-Daily call limit: 100
-Loaded 2087 cities for: Alabama, Alaska, Arizona, ...
-Total jobs: 35479 (2087 cities × 17 terms)
---- dental clinic | Abbeville, Louisiana ---
+Region: US | Daily limit: 100
+Total cities: 153
+
+========== STATE: Maryland (153 cities) ==========
+Jobs for Maryland: 2601 (153 cities × 17 terms)
+--- dental clinic | Aberdeen, Maryland ---
+  📋 Creating sheet tab: "Maryland"
+✅ Added 4 leads (dental clinic | Aberdeen, Maryland).
+Progress Maryland: 1/2601 jobs
 ...
 ```
 
-Interrupt with `Ctrl+C` at any time. Progress is checkpointed after each
-completed job, so you lose at most the job in flight.
+### Per-state tabs (auto-created)
+
+Each state gets its **own sheet tab** named after the state (e.g., "Maryland", "California", "Lebanon"). The tab is created automatically on first write with the correct headers. No manual sheet setup needed.
+
+### Interrupt and resume
+
+Interrupt with `Ctrl+C` at any time. Progress is checkpointed **per state** after each completed job, so you lose at most the job in flight. Resume by running the same command again — it picks up where that state left off.
 
 **Do not run two instances at the same time for the same market.**
-`appendToSheet()` finds the next free row by reading column A, so two concurrent
-processes will both read the same "last row" and overwrite each other's appends.
-You *can* run different markets simultaneously (e.g., `MARKET=US` in one
-terminal, `MARKET=LEBANON` in another) since they use separate state files and
-spreadsheet tabs.
+The global `seen_leads_<market>.json` and daily quota are shared across states in a market. You *can* run different markets simultaneously (e.g., `MARKET=US` in one terminal, `MARKET=LEBANON` in another) since they use separate state files and spreadsheet tabs.
 
 ---
 
 ## Resume and state
 
-**Per-market state files** (where `<market>` is `us` or `lebanon`):
+**Per-market, per-state state files** (stored in `.data/`):
 
-**`progress_<market>.json`**
+**`.data/progress_<state>_<market>.json`** (e.g., `progress_Maryland_us.json`)
 ```json
 { "lastJobIndex": 47 }
 ```
-The index of the next job (city × term combination) to process. After a job
-finishes successfully, the script writes `i + 1`.
+The index of the next job (city × term combination) to process **for that specific state**. After a job
+finishes successfully, the script writes `i + 1`. Each state has its own checkpoint, so you can pause Maryland and resume California independently.
 
-**`seen_leads_<market>.json`**
+**`.data/seen_leads_<market>.json`** (e.g., `seen_leads_us.json`)
 ```json
 ["ChIJifIePKtZwokRVZ-UdRGkZzs", "ChIJPxPd_P1YwokfzLhSiACEoU"]
 ```
-Every Place ID the script has ever seen for that market, target or not. Checked
-before appending, and it is a plain array so it grows without bound.
+Every Place ID the script has ever seen for that market, target or not. **Global across all states** in that market. Checked before appending, and it is a plain array so it grows without bound.
 
-**`quota_<market>.json`**
+**`.data/quota_<market>.json`** (e.g., `quota_us.json`)
 ```json
 { "date": "2026-10-26", "used": 42 }
 ```
-Daily API call counter. Resets automatically at midnight.
+Daily API call counter. Resets automatically at midnight. Shared across all states in the market.
 
 ### Failure behavior, which is the good part
 
@@ -536,11 +567,10 @@ shape of thing that produces a surprise invoice.
 - **`seen_leads_<market>.json` is per-market.** Place IDs are not shared
   between US and Lebanon markets. A Place ID seen in the US market won't affect
   the Lebanon market and vice versa.
-- **Single sheet tab per market.** Each market writes to its own tab
-  (`US` or `Lebanon`). For US market, all 51 states write to the `US` tab.
-  Consider adding a `State` column if you need to filter by state later.
+- **Per-state sheet tabs (US).** Each US state has its own sheet tab (auto-created: "Alaska", "California", "Maryland", etc.). For Lebanon market, there is a single "Lebanon" tab with all city results. No need for manual tab creation.
 - **US market is massive.** 35,479 jobs (2,087 cities × 17 terms). At 100 calls/day,
-  a full US run takes ~355 days. Plan accordingly and use budget alerts.
+  a full US run takes ~355 days. Run specific states instead for faster results
+  (e.g., `pnpm start:ca` for California, `pnpm start:top5` for the 5 most populous states).
 - **The spreadsheet ID is hardcoded in two places** in `appendToSheet()`.
 - **`appendToSheet()` assumes contiguous data** starting at `A2`. Insert a blank
   row, or a row of subtotals, and the next append lands in the wrong place.
