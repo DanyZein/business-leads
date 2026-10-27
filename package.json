@@ -4,7 +4,16 @@
   "description": "Finds local businesses with no website (or only a social/DIY page) via the Google Places API and appends them as leads to a Google Sheet.",
   "main": "scraper.js",
   "scripts": {
-    "start": "node scraper.js"
+    "start": "node scraper.js",
+    "start:us": "cross-env MARKET=US node scraper.js",
+    "start:lb": "cross-env MARKET=LEBANON node scraper.js",
+    "start:ca": "cross-env MARKET=US node scraper.js California",
+    "start:tx": "cross-env MARKET=US node scraper.js Texas",
+    "start:fl": "cross-env MARKET=US node scraper.js Florida",
+    "start:ny": "cross-env MARKET=US node scraper.js New York",
+    "start:md": "cross-env MARKET=US node scraper.js Maryland",
+    "start:top5": "cross-env MARKET=US node scraper.js California Texas Florida New York Pennsylvania",
+    "start:top10": "cross-env MARKET=US node scraper.js California Texas Florida New York Pennsylvania Illinois Ohio Georgia North Carolina Michigan"
   },
   "keywords": [
     "google-places",
@@ -18,5 +27,8 @@
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
     "googleapis": "^170.0.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }

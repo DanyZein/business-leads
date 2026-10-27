@@ -3,11 +3,13 @@
 A Node.js scraper that finds local businesses with a weak or nonexistent web
 presence and appends them to a Google Sheet as sales leads.
 
-Point it at a state and a business type (`"Roofers"`, `"Restaurants"`,
-`"Dentists"`), and it walks every city in that state, queries the Google Places
-API (New), filters for businesses that have no website or only a DIY/social
-page, and writes the results into a spreadsheet with clickable map links and a
-local-time column so you know when to call.
+**Supports multiple markets:** United States (all 50 states + DC) and Lebanon.
+
+Point it at a market (`US` or `LEBANON`), choose your search terms, and it walks
+every city in that market, queries the Google Places API (New), filters for
+businesses that have no website or only a DIY/social page, and writes the
+results into a spreadsheet with clickable map links and a local-time column so
+you know when to call.
 
 ---
 
@@ -201,13 +203,45 @@ Everything you normally touch is at the top of the main script:
 
 | Constant          | Purpose                                                          | Default             |
 | ----------------- | ---------------------------------------------------------------- | ------------------- |
-| `TARGET_STATES`   | States to process. Empty array means every state in `cities.js`. | `["Maryland"]`      |
-| `business`        | The search term. Becomes `"<business> in <City, State>"`.        | `"Roofers"`         |
-| `SEEN_LEADS_FILE` | JSON file holding every Place ID already processed.              | `"seen_leads.json"` |
-| `PROGRESS_FILE`   | JSON file holding the checkpoint.                                | `"progress.json"`   |
-| spreadsheet ID    | Hardcoded in `appendToSheet()` in two places.                    | your sheet          |
+| `MARKET`          | Market to scrape: `"US"` or `"LEBANON"` (env var or edit)        | `"LEBANON"`         |
+| `TARGET_STATES`   | Auto-set based on market: all 51 US states/territories or Lebanon | Auto               |
+| `SEARCH_TERMS`    | Array of search terms per market                                 | Market-specific     |
+| `SEEN_LEADS_FILE` | JSON file holding every Place ID already processed (per market). | `"seen_leads_<market>.json"` |
+| `PROGRESS_FILE`   | JSON file holding the checkpoint (per market).                   | `"progress_<market>.json"` |
+| `QUOTA_FILE`      | Daily API call tracking (per market).                            | `"quota_<market>.json"` |
+| spreadsheet ID    | Hardcoded in `appendToSheet()`.                                  | your sheet          |
 
-Rename `business` to whatever you are selling into. Good candidates:
+### Market-Specific Settings
+
+**US Market** (`MARKET=US`):
+- 51 states/territories (50 states + District of Columbia)
+- 2,087 city-state combinations
+- 17 English search terms (medical, construction, real estate, volume)
+- Region code: `US`, Language: `en`
+- Daily call limit: 100
+
+**Lebanon Market** (`MARKET=LEBANON`):
+- 1 region (Lebanon) with 31 cities (tiered by density/affluence)
+- 31 city-state combinations
+- 20 search terms (17 English + 3 Arabic variants)
+- Region code: `LB`, Language: `en`
+- Daily call limit: 30
+
+### Switching Markets
+
+```bash
+# Run for US market
+MARKET=US node scraper.js
+
+# Run for Lebanon market (default)
+node scraper.js
+# or explicitly:
+MARKET=LEBANON node scraper.js
+```
+
+Each market maintains its own state files (`seen_leads_<market>.json`, `progress_<market>.json`, `quota_<market>.json`), so you can switch between markets without losing progress.
+
+Rename `SEARCH_TERMS` to whatever you are selling into. Good candidates:
 `"Roofers"`, `"Restaurants"`, `"Dentists"`, `"Plumbers"`, `"Landscapers"`,
 `"Barbershops"`.
 
@@ -223,13 +257,14 @@ gives worse results for those.
 | File                                 | Committed? | Purpose                       |
 | ------------------------------------ | ---------- | ----------------------------- |
 | `scraper.js`                         | Yes        | Main scraper                  |
-| `cities.js`                          | Yes        | State to city-list lookup     |
+| `cities.js`                          | Yes        | State/region to city-list lookup (US + Lebanon) |
 | `package.json` / `package-lock.json` | Yes        | Dependencies                  |
 | `.env`                               | **No**     | `MAPS_API_KEY`                |
 | `credentials.json`                   | **No**     | Service account private key   |
 | `node_modules/`                      | **No**     | Regenerable via `npm install` |
-| `seen_leads.json`                    | Your call  | Dedupe memory (see below)     |
-| `progress.json`                      | Your call  | Resume checkpoint (see below) |
+| `seen_leads_<market>.json`           | Your call  | Dedupe memory per market      |
+| `progress_<market>.json`             | Your call  | Resume checkpoint per market  |
+| `quota_<market>.json`                | Your call  | Daily API call tracking per market |
 
 ### `cities.js` shape
 
@@ -292,84 +327,113 @@ clock, not a timestamp of when the lead was scraped.
 
 ## Running it
 
+### Lebanon Market (default)
 ```bash
 node scraper.js
+# or explicitly:
+MARKET=LEBANON node scraper.js
+```
+
+### US Market
+```bash
+MARKET=US node scraper.js
 ```
 
 Or via npm:
-
 ```json
 {
   "scripts": {
-    "start": "node scraper.js"
+    "start": "node scraper.js",
+    "start:us": "MARKET=US node scraper.js",
+    "start:lb": "MARKET=LEBANON node scraper.js"
   }
 }
 ```
 
 ```bash
-npm start
+npm start        # Lebanon
+npm run start:us # US
+npm run start:lb # Lebanon
 ```
 
 Run it from the project root. The `keyFile: "credentials.json"` path in the
 Google auth block is resolved relative to the **working directory**, not the
-script file, so running it from elsewhere breaks authentication. Running
-`node scraper/scraper.js` from a parent folder will fail for this reason.
+script file, so running it from elsewhere breaks authentication.
 
-Expected console output:
-
+Expected console output (Lebanon):
 ```
-Loaded 312 cities for: Maryland
---- Starting City: Aberdeen, Maryland ---
-Fetched batch...
-✅ Success: Added 4 leads for Aberdeen, Maryland.
-Progress saved. Completed 1/312 cities.
---- Starting City: Baltimore, Maryland ---
+=== Market: LEBANON ===
+Target states: 1
+Search terms: 20
+Region code: LB
+Daily call limit: 30
+Loaded 31 cities for: Lebanon
+Total jobs: 620 (31 cities × 20 terms)
+--- dental clinic | Adma, Lebanon ---
+...
+```
+
+Expected console output (US):
+```
+=== Market: US ===
+Target states: 51
+Search terms: 17
+Region code: US
+Daily call limit: 100
+Loaded 2087 cities for: Alabama, Alaska, Arizona, ...
+Total jobs: 35479 (2087 cities × 17 terms)
+--- dental clinic | Abbeville, Louisiana ---
 ...
 ```
 
 Interrupt with `Ctrl+C` at any time. Progress is checkpointed after each
-completed city, so you lose at most the city in flight.
+completed job, so you lose at most the job in flight.
 
-**Do not run two instances at the same time.** `appendToSheet()` finds the next
-free row by reading column A, so two concurrent processes will both read the
-same "last row" and overwrite each other's appends.
+**Do not run two instances at the same time for the same market.**
+`appendToSheet()` finds the next free row by reading column A, so two concurrent
+processes will both read the same "last row" and overwrite each other's appends.
+You *can* run different markets simultaneously (e.g., `MARKET=US` in one
+terminal, `MARKET=LEBANON` in another) since they use separate state files and
+spreadsheet tabs.
 
 ---
 
 ## Resume and state
 
-Two JSON files carry state between runs.
+**Per-market state files** (where `<market>` is `us` or `lebanon`):
 
-**`progress.json`**
-
+**`progress_<market>.json`**
 ```json
-{ "lastCityIndex": 47 }
+{ "lastJobIndex": 47 }
 ```
+The index of the next job (city × term combination) to process. After a job
+finishes successfully, the script writes `i + 1`.
 
-The index of the next city to process. After a city finishes successfully, the
-script writes `i + 1`.
-
-**`seen_leads.json`**
-
+**`seen_leads_<market>.json`**
 ```json
 ["ChIJifIePKtZwokRVZ-UdRGkZzs", "ChIJPxPd_P1YwokfzLhSiACEoU"]
 ```
+Every Place ID the script has ever seen for that market, target or not. Checked
+before appending, and it is a plain array so it grows without bound.
 
-Every Place ID the script has ever seen, target or not. Checked before
-appending, and it is a plain array so it grows without bound.
+**`quota_<market>.json`**
+```json
+{ "date": "2026-10-26", "used": 42 }
+```
+Daily API call counter. Resets automatically at midnight.
 
 ### Failure behavior, which is the good part
 
-If the Places API errors mid-city, `completedSuccessfully` goes false and the
-loop **breaks without saving anything** for that city:
+If the Places API errors mid-job, `completedSuccessfully` goes false and the
+loop **breaks without saving anything** for that job:
 
-- `progress.json` is not advanced, so that city is retried on the next run
-- `seen_leads.json` is not updated, so nothing is marked as processed
-- `appendToSheet()` is never called, because it only runs after the whole city
+- `progress_<market>.json` is not advanced, so that job is retried on the next run
+- `seen_leads_<market>.json` is not updated, so nothing is marked as processed
+- `appendToSheet()` is never called, because it only runs after the whole job
   returns
 
-The result is that a crash or rate limit mid-city leaves no partial writes and
-no duplicate rows. Restart and it picks up cleanly at that same city.
+The result is that a crash or rate limit mid-job leaves no partial writes and
+no duplicate rows. Restart and it picks up cleanly at that same job.
 
 ### Empty page retries
 
@@ -469,14 +533,14 @@ shape of thing that produces a surprise invoice.
 - **Substring matching.** `site.includes("fb.me")` matches anywhere in the URL,
   so an unrelated domain containing that string would false-positive. Rare in
   practice, but it is why the filter is a substring check and not a domain parse.
-- **`seen_leads.json` is global.** It is shared across every state and every
-  business type. A Place ID seen once is never reconsidered, even if you later
-  change the filter logic. Expanding the platform list will not retroactively
-  surface leads that a previous run skipped.
-- **Only the first state gets a sheet tab.** `sheetName = TARGET_STATES[0]`
-  means a run with `["Maryland", "Virginia"]` writes **everything** into the
-  `Maryland` tab, mixing both states with no column recording which is which.
-  Run one state at a time, or fix this before multi-state runs.
+- **`seen_leads_<market>.json` is per-market.** Place IDs are not shared
+  between US and Lebanon markets. A Place ID seen in the US market won't affect
+  the Lebanon market and vice versa.
+- **Single sheet tab per market.** Each market writes to its own tab
+  (`US` or `Lebanon`). For US market, all 51 states write to the `US` tab.
+  Consider adding a `State` column if you need to filter by state later.
+- **US market is massive.** 35,479 jobs (2,087 cities × 17 terms). At 100 calls/day,
+  a full US run takes ~355 days. Plan accordingly and use budget alerts.
 - **The spreadsheet ID is hardcoded in two places** in `appendToSheet()`.
 - **`appendToSheet()` assumes contiguous data** starting at `A2`. Insert a blank
   row, or a row of subtotals, and the next append lands in the wrong place.
@@ -518,32 +582,52 @@ spending budget alerts.
 
 ---
 
-## Adding a new state or business type
+## Adding a new state, region, or business type
 
-### New state
+### New US State
 
-1. Add the state key and its city array to `cities.js`, city names only, no
-   state suffix.
-2. Set `TARGET_STATES = ["Virginia"]`.
-3. Create a sheet tab named exactly `Virginia`.
-4. Reset the checkpoint: `progress.json` to `{ "lastCityIndex": 0 }`.
-5. If you want a clean lead pool, start a fresh `seen_leads.json` too.
+1. Add the state key and its city array to `cities.js` (alphabetical position),
+   city names only, no state suffix.
+2. Set `MARKET=US` and the state will be automatically included.
+3. Create a sheet tab named exactly the state name (e.g., `Virginia`).
+4. Reset the checkpoint for US: `progress_us.json` to `{ "lastJobIndex": 0 }`.
+5. If you want a clean lead pool, start a fresh `seen_leads_us.json` too.
 6. Run a small slice first, verify the sheet, then run the rest.
 
-### New business type
+### New Lebanon Region/City
 
-1. Change `const business = "Dentists"`.
-2. **Reset `progress.json` to index 0.** This is the step people miss. The
-   checkpoint is per-position, not per-business-type, so leaving it at city 87
-   means every city before 87 is silently skipped for the new business type.
-3. Decide what to do with `seen_leads.json`. Place IDs are per business, so
-   keeping it is usually fine and prevents a business you already logged as a
-   lead from being logged again. If you want a completely fresh pass, archive it
-   and start a new one.
+1. Add the city to the `Lebanon` array in `cities.js` (maintain tier ordering).
+2. Set `MARKET=LEBANON` (default).
+3. Create a sheet tab named exactly `Lebanon`.
+4. Reset the checkpoint for Lebanon: `progress_lebanon.json` to `{ "lastJobIndex": 0 }`.
+5. Run a small slice first, verify the sheet, then run the rest.
+
+### New Market (e.g., Canada, UAE, etc.)
+
+1. Add the market to `marketConfig` in `scraper.js` with:
+   - `targetStates`: array of state/region keys from `cities.js`
+   - `sheetName`: tab name for the spreadsheet
+   - `regionCode`: ISO country code for Places API
+   - `languageCode`: language code
+   - `dailyCallLimit`: appropriate limit
+   - `searchTerms`: array of search terms
+2. Add the state/region and its cities to `cities.js`.
+3. Create the corresponding sheet tab.
+4. Run with `MARKET=<YOUR_MARKET> node scraper.js`.
+
+### New business type / search terms
+
+1. Edit the `searchTerms` array for your target market in `scraper.js`.
+2. **Reset the progress file for that market** to `{ "lastJobIndex": 0 }`.
+3. Decide what to do with `seen_leads_<market>.json`. Place IDs are per
+   business, so keeping it is usually fine and prevents a business you already
+   logged as a lead from being logged again. If you want a completely fresh
+   pass, archive it and start a new one.
 4. Consider pointing the new vertical at its own spreadsheet or tab.
 
-Because both state files are single fixed filenames, running two verticals in
-parallel means renaming them between runs. See the roadmap.
+Because state files are market-specific (`seen_leads_<market>.json`,
+`progress_<market>.json`, `quota_<market>.json`), you can run multiple markets
+and verticals in parallel without file conflicts.
 
 ---
 

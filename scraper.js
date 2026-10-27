@@ -1,68 +1,162 @@
 const axios = require("axios");
 const { google } = require("googleapis");
 const fs = require("fs");
+const path = require("path");
 
 const citiesData = require("./cities.js");
 require("dotenv").config();
 
-// ---------- Config ----------
+// ============================================================================
+// MARKET CONFIGURATION
+// ============================================================================
+const MARKET = process.env.MARKET || "LEBANON"; // "US" or "LEBANON"
 
-const TARGET_STATES = ["Lebanon"];
-const SHEET_NAME = TARGET_STATES[0];
+const marketConfig = {
+  US: {
+    regionCode: "US",
+    languageCode: "en",
+    dailyCallLimit: 100,
+    searchTerms: [
+      // Tier 1: dental / aesthetic / medical
+      "dental clinic",
+      "dentist",
+      "dermatology clinic",
+      "plastic surgery clinic",
+      "aesthetic clinic",
+      "medical center",
 
-// Each term is its own job. Keep terms short and canonical.
-const SEARCH_TERMS = [
-  // Tier 1: dental / aesthetic / medical
-  "dental clinic",
-  "dentist",
-  "dermatology clinic",
-  "plastic surgery clinic",
-  "aesthetic clinic",
-  "medical center",
+      // Tier 2: solar / construction
+      "solar panel installer",
+      "roofing contractor",
+      "waterproofing",
+      "insulation contractor",
+      "interior fit out",
+      "aluminum and glass",
 
-  // Tier 2: solar / construction
-  "solar panel installer",
-  "roofing contractor",
-  "waterproofing",
-  "insulation contractor",
-  "interior fit out",
-  "aluminum and glass",
+      // Tier 3: real estate
+      "real estate agency",
+      "real estate developer",
 
-  // Tier 3: real estate
-  "real estate agency",
-  "real estate developer",
+      // Volume filler
+      "cafe",
+      "salon",
+    ],
+  },
+  LEBANON: {
+    regionCode: "LB",
+    languageCode: "en",
+    dailyCallLimit: 30,
+    searchTerms: [
+      // Tier 1: dental / aesthetic / medical
+      "dental clinic",
+      "dentist",
+      "dermatology clinic",
+      "plastic surgery clinic",
+      "aesthetic clinic",
+      "medical center",
 
-  // Volume filler
-  "restaurant",
-  "cafe",
-  "salon",
+      // Tier 2: solar / construction
+      "solar panel installer",
+      "roofing contractor",
+      "waterproofing",
+      "insulation contractor",
+      "interior fit out",
+      "aluminum and glass",
 
-  // Arabic variants
-  "عيادة أسنان",
-  "عزل مائي",
-  "تسقيف",
-];
+      // Tier 3: real estate
+      "real estate agency",
+      "real estate developer",
 
-// Free-tier guardrail.
-// Text Search (New) is a Pro SKU (5,000 free/month) as long as you do NOT
-// request Enterprise-only fields like rating or userRatingCount.
-// 100/day × 30 ≈ 3,000, leaving headroom for retries and other states.
-const DAILY_CALL_LIMIT = 30;
+      // Volume filler
+      "cafe",
+      "salon",
 
-// ---------- Files ----------
-const SEEN_LEADS_FILE = "seen_leads.json";
-const PROGRESS_FILE = `progress_${SHEET_NAME}.json`;
-const QUOTA_FILE = "quota.json";
+      // Arabic variants
+      "عيادة أسنان",
+      "عزل مائي",
+      "تسقيف",
+    ],
+  },
+};
 
-// ---------- Sheets auth ----------
+const config = marketConfig[MARKET] || marketConfig.LEBANON;
+const REGION_CODE = config.regionCode;
+const LANGUAGE_CODE = config.languageCode;
+const DAILY_CALL_LIMIT = config.dailyCallLimit;
+const SEARCH_TERMS = config.searchTerms;
+
+// ============================================================================
+// STATE SELECTION (CLI args > env > default)
+// ============================================================================
+// Usage:
+//   node scraper.js                    # Lebanon (default), all cities
+//   MARKET=US node scraper.js          # US, all states
+//   MARKET=US STATE=California node scraper.js
+//   MARKET=US STATE="California,Texas" node scraper.js
+//   node scraper.js California Texas   # CLI args also work
+
+function getTargetStates() {
+  // 1. CLI args (non-flag arguments)
+  const cliStates = process.argv.slice(2).filter(arg => !arg.startsWith("--") && !arg.includes("="));
+
+  // 2. Env var
+  const envStates = process.env.STATE?.split(",").map(s => s.trim()).filter(Boolean) || [];
+
+  // 3. Default: all states for the market
+  const defaultStates = MARKET === "US"
+    ? Object.keys(citiesData).filter(s => s !== "Lebanon")
+    : ["Lebanon"];
+
+  const selected = cliStates.length > 0 ? cliStates : (envStates.length > 0 ? envStates : defaultStates);
+
+  // Validate
+  const invalid = selected.filter(s => !citiesData[s]);
+  if (invalid.length > 0) {
+    console.error(`❌ Invalid state(s): ${invalid.join(", ")}`);
+    console.error(`Available: ${Object.keys(citiesData).join(", ")}`);
+    process.exit(1);
+  }
+
+  return selected;
+}
+
+const TARGET_STATES = getTargetStates();
+
+// ============================================================================
+// FILE PATHS (per-market, per-state)
+// ============================================================================
+const DATA_DIR = ".data";
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const QUOTA_FILE = path.join(DATA_DIR, `quota_${MARKET.toLowerCase()}.json`);
+const SEEN_LEADS_FILE = path.join(DATA_DIR, `seen_leads_${MARKET.toLowerCase()}.json`);
+
+// Per-state files will be: .data/progress_California_us.json, .data/progress_Lebanon_lebanon.json
+function getProgressFile(state) {
+  const safeState = state.replace(/[^a-zA-Z0-9]/g, "_");
+  return path.join(DATA_DIR, `progress_${safeState}_${MARKET.toLowerCase()}.json`);
+}
+
+// ============================================================================
+// GOOGLE AUTH
+// ============================================================================
 const auth = new google.auth.GoogleAuth({
   keyFile: "credentials.json",
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-// ---------- Helpers ----------
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+if (!SPREADSHEET_ID) {
+  console.error("❌ SPREADSHEET_ID not set in .env");
+  process.exit(1);
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
 const loadJSON = (file, defaultVal) =>
   fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : defaultVal;
+
 const saveJSON = (file, data) =>
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
@@ -81,24 +175,87 @@ function spendCall() {
   saveJSON(QUOTA_FILE, q);
 }
 
-function getCityList(targetStates = []) {
+function getCityList(states = []) {
   const flatList = [];
-  const statesToProcess =
-    targetStates.length > 0 ? targetStates : Object.keys(citiesData);
+  const statesToProcess = states.length > 0 ? states : Object.keys(citiesData);
 
   statesToProcess.forEach((state) => {
     if (citiesData[state]) {
       citiesData[state].forEach((city) => {
-        flatList.push(`${city}, ${state}`);
+        flatList.push({ city, state, key: `${city}, ${state}` });
       });
     }
   });
 
-  return flatList.sort();
+  // Sort by state, then city for deterministic ordering
+  return flatList.sort((a, b) => {
+    if (a.state !== b.state) return a.state.localeCompare(b.state);
+    return a.city.localeCompare(b.city);
+  });
 }
 
-// ---------- Scraper ----------
-async function getLeadsForQuery(cityName, term) {
+// ============================================================================
+// SHEET TAB MANAGEMENT
+// ============================================================================
+async function ensureSheetTabExists(sheets, tabName) {
+  try {
+    // Try to read the tab - if it exists, this succeeds
+    await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${tabName}!A1:A1`,
+    });
+    return true; // Tab exists
+  } catch (error) {
+    if (error.code === 400 || error.message?.includes("Unable to parse range")) {
+      // Tab doesn't exist - create it
+      console.log(`  📋 Creating sheet tab: "${tabName}"`);
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        resource: {
+          requests: [{
+            addSheet: {
+              properties: {
+                title: tabName,
+                gridProperties: { frozenRowCount: 1 }
+              }
+            }
+          }]
+        }
+      });
+
+      // Add headers
+      const headers = [
+        "Business Name",      // A
+        "Phone",              // B
+        "Address (clickable)", // C
+        "", "",               // D, E
+        "Website",            // F
+        "Status",             // G
+        "", "", "", "",       // H-K
+        "Business Type",      // L
+        "Search Term",        // M
+        "State",              // N
+        "", "", "", "", "", "", "", "", "", // O-Y
+        "Place ID"            // Z
+      ];
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${tabName}!A1:Z1`,
+        valueInputOption: "USER_ENTERED",
+        resource: { values: [headers] }
+      });
+
+      return true;
+    }
+    throw error;
+  }
+}
+
+// ============================================================================
+// SCRAPER CORE
+// ============================================================================
+async function getLeadsForCity(cityName, state, term) {
   let completedSuccessfully = true;
   const allProcessedIds = [];
   const targetLeadsForCity = [];
@@ -116,9 +273,6 @@ async function getLeadsForQuery(cityName, term) {
     const headers = {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": process.env.MAPS_API_KEY,
-      // Pro-tier fields only. Do NOT add places.rating or
-      // places.userRatingCount here — that would push every request
-      // into the 1,000-call Enterprise bucket.
       "X-Goog-FieldMask":
         "places.id,places.displayName,places.websiteUri," +
         "places.internationalPhoneNumber,places.formattedAddress," +
@@ -129,8 +283,8 @@ async function getLeadsForQuery(cityName, term) {
     const body = {
       textQuery: `${term} in ${cityName}`,
       pageToken: nextToken,
-      regionCode: "LB",
-      languageCode: "en",
+      regionCode: REGION_CODE,
+      languageCode: LANGUAGE_CODE,
     };
 
     try {
@@ -171,14 +325,12 @@ async function getLeadsForQuery(cityName, term) {
           site.includes("facebook.com") ||
           site.includes("instagram.com");
 
-        // Review count removed to stay in the Pro SKU.
-        // Still require a phone and an open business.
         const realBusiness =
           !!p.internationalPhoneNumber &&
           p.businessStatus !== "CLOSED_PERMANENTLY";
 
         if (weakSite && realBusiness) {
-          targetLeadsForCity.push({ ...p, _term: term });
+          targetLeadsForCity.push({ ...p, _term: term, _state: state });
         }
         allProcessedIds.push(p.id);
       });
@@ -198,10 +350,14 @@ async function getLeadsForQuery(cityName, term) {
   return { targetLeadsForCity, allProcessedIds, completedSuccessfully };
 }
 
-// ---------- Sheets ----------
-async function appendToSheet(leads) {
+// ============================================================================
+// SHEET APPEND (per-state tab)
+// ============================================================================
+async function appendToSheet(sheets, state, leads) {
   if (leads.length === 0) return;
-  const sheets = google.sheets({ version: "v4", auth });
+
+  // Ensure tab exists
+  await ensureSheetTabExists(sheets, state);
 
   const rows = leads.map((lead) => {
     const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -210,109 +366,119 @@ async function appendToSheet(leads) {
     const clickableAddress = `=HYPERLINK("${mapsUrl}", "${lead.formattedAddress}")`;
 
     return [
-      lead.displayName.text, // A
-      lead.internationalPhoneNumber
-        ? `'${lead.internationalPhoneNumber}`
-        : "N/A", // B
-      clickableAddress, // C
-      "", // D
-      "", // E
-      lead.websiteUri || "NO WEBSITE", // F
-      "Not Contacted", // G  ← moved from H
-      "", // H
-      "", // I
-      "", // J
-      "", // K
-      lead.primaryTypeDisplayName?.text || "Unknown", // L  ← moved from M
-      lead._term || "", // M  ← search term
-      ...Array(9).fill(""), // N–Y (12 empties)
-      lead.id, // Z  ← place ID moved from AB
+      lead.displayName.text,                                    // A
+      lead.internationalPhoneNumber ? `'${lead.internationalPhoneNumber}` : "N/A", // B
+      clickableAddress,                                          // C
+      "", "",                                                    // D, E
+      lead.websiteUri || "NO WEBSITE",                          // F
+      "Not Contacted",                                           // G
+      "", "", "", "",                                            // H-K
+      lead.primaryTypeDisplayName?.text || "Unknown",           // L
+      lead._term || "",                                          // M
+      lead._state || state,                                      // N (State)
+      ...Array(8).fill(""),                                      // O-Y
+      lead.id,                                                   // Z
     ];
   });
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A2`,
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${state}!A2`,
     valueInputOption: "USER_ENTERED",
     resource: { values: rows },
   });
 }
 
-// ---------- Main ----------
+// ============================================================================
+// MAIN - Per-State Processing
+// ============================================================================
 (async () => {
-  const myCities = getCityList(TARGET_STATES);
-  console.log(
-    `Loaded ${myCities.length} cities for: ${TARGET_STATES.join(", ")}`,
-  );
+  console.log(`=== Market: ${MARKET} ===`);
+  console.log(`Target states: ${TARGET_STATES.join(", ")}`);
+  console.log(`Search terms: ${SEARCH_TERMS.length}`);
+  console.log(`Region: ${REGION_CODE} | Daily limit: ${DAILY_CALL_LIMIT}`);
 
-  const jobs = [];
-  myCities.forEach((city) => {
-    SEARCH_TERMS.forEach((term) => jobs.push({ city, term }));
+  const allCities = getCityList(TARGET_STATES);
+  console.log(`Total cities: ${allCities.length}`);
+
+  // Group cities by state for per-state processing
+  const citiesByState = {};
+  allCities.forEach(({ city, state, key }) => {
+    if (!citiesByState[state]) citiesByState[state] = [];
+    citiesByState[state].push({ city, state, key });
   });
-  console.log(
-    `Total jobs: ${jobs.length} (${myCities.length} cities × ${SEARCH_TERMS.length} terms)`,
-  );
 
-  let progress = loadJSON(PROGRESS_FILE, { lastJobIndex: 0 });
-  if (
-    progress.lastCityIndex !== undefined ||
-    typeof progress.lastJobIndex !== "number"
-  ) {
-    console.log(
-      "Old progress format detected — resetting progress. (Job list changed.)",
-    );
-    progress = { lastJobIndex: 0 };
-    saveJSON(PROGRESS_FILE, progress);
-  }
-
+  const sheets = google.sheets({ version: "v4", auth });
   let seenIds = loadJSON(SEEN_LEADS_FILE, []);
 
-  for (let i = progress.lastJobIndex; i < jobs.length; i++) {
-    const { city, term } = jobs[i];
-
-    if (callsLeft().left < 5) {
-      console.log("Daily call limit reached, stopping for today.");
-      break;
+  // Process each state independently
+  for (const state of TARGET_STATES) {
+    const stateCities = citiesByState[state] || [];
+    if (stateCities.length === 0) {
+      console.log(`⚠️ No cities found for ${state}, skipping`);
+      continue;
     }
 
-    const { targetLeadsForCity, allProcessedIds, completedSuccessfully } =
-      await getLeadsForQuery(city, term);
+    console.log(`\n========== STATE: ${state} (${stateCities.length} cities) ==========`);
 
-    if (!completedSuccessfully) {
-      console.log(`❌ Job failed, will retry later: ${term} | ${city}`);
-      break;
-    }
+    // Load THIS state's progress
+    const progressFile = getProgressFile(state);
+    let progress = loadJSON(progressFile, { lastJobIndex: 0 });
 
-    if (targetLeadsForCity.length > 0) {
-      try {
-        await appendToSheet(targetLeadsForCity);
-        console.log(
-          `✅ Added ${targetLeadsForCity.length} leads (${term} | ${city}).`,
-        );
-      } catch (e) {
-        console.error(
-          `Sheet write failed for ${term} | ${city}:`,
-          e.message,
-        );
+    // Build jobs for this state: city × term
+    const stateJobs = [];
+    stateCities.forEach(({ city, state: s, key }) => {
+      SEARCH_TERMS.forEach((term) => stateJobs.push({ city, state: s, key, term }));
+    });
+    console.log(`Jobs for ${state}: ${stateJobs.length} (${stateCities.length} cities × ${SEARCH_TERMS.length} terms)`);
+
+    // Resume from this state's checkpoint
+    for (let i = progress.lastJobIndex; i < stateJobs.length; i++) {
+      const { city, key, term } = stateJobs[i];
+
+      if (callsLeft().left < 5) {
+        console.log("\n🛑 Daily call limit reached, stopping for today.");
+        console.log(`   Progress saved for ${state} at job ${i}/${stateJobs.length}`);
+        console.log(`   Resume with: ${process.argv.join(" ")}`);
+        process.exit(0);
+      }
+
+      const { targetLeadsForCity, allProcessedIds, completedSuccessfully } =
+        await getLeadsForCity(key, state, term);
+
+      if (!completedSuccessfully) {
+        console.log(`❌ Job failed, will retry later: ${term} | ${key}`);
         break;
       }
-    } else {
-      console.log(`ℹ️ No new leads (${term} | ${city}).`);
+
+      if (targetLeadsForCity.length > 0) {
+        try {
+          await appendToSheet(sheets, state, targetLeadsForCity);
+          console.log(`✅ Added ${targetLeadsForCity.length} leads (${term} | ${key}).`);
+        } catch (e) {
+          console.error(`Sheet write failed for ${term} | ${key}:`, e.message);
+          break;
+        }
+      } else {
+        console.log(`ℹ️ No new leads (${term} | ${key}).`);
+      }
+
+      // Update global dedupe
+      const updatedSeenIds = [...new Set([...seenIds, ...allProcessedIds])];
+      saveJSON(SEEN_LEADS_FILE, updatedSeenIds);
+      seenIds = updatedSeenIds;
+
+      // Update THIS state's progress
+      progress.lastJobIndex = i + 1;
+      saveJSON(progressFile, progress);
+
+      console.log(`Progress ${state}: ${i + 1}/${stateJobs.length} jobs`);
+
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
-    const updatedSeenIds = [...new Set([...seenIds, ...allProcessedIds])];
-    saveJSON(SEEN_LEADS_FILE, updatedSeenIds);
-    seenIds = updatedSeenIds;
-
-    progress.lastJobIndex = i + 1;
-    saveJSON(PROGRESS_FILE, progress);
-
-    console.log(
-      `Progress saved: ${i + 1}/${jobs.length} jobs (${city} × ${term}).`,
-    );
-
-    await new Promise((r) => setTimeout(r, 2000));
+    console.log(`✅ Completed ${state}`);
   }
 
-  console.log("Done (or hit the daily limit).");
+  console.log("\n🎉 All selected states processed (or daily limit reached).");
 })();
