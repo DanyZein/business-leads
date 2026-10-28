@@ -591,7 +591,7 @@ module.exports = {
     "Urbana",
     "Vandalia",
     "Virden",
-    "Waukegan",
+    "Waukeyan",
     "Wheaton",
     "Wilmette",
     "Winnetka",

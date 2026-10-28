@@ -47,7 +47,7 @@ const marketConfig = {
     languageCode: "en",
     dailyCallLimit: 30,
     searchTerms: [
-      // Tier 1: dental / aesthetic / medical
+      //! tier 1
       "dental clinic",
       "dentist",
       "dermatology clinic",
@@ -55,7 +55,7 @@ const marketConfig = {
       "aesthetic clinic",
       "medical center",
 
-      // Tier 2: solar / construction
+      //! tier 2
       "solar panel installer",
       "roofing contractor",
       "waterproofing",
@@ -63,15 +63,15 @@ const marketConfig = {
       "interior fit out",
       "aluminum and glass",
 
-      // Tier 3: real estate
+      //! ter 3
       "real estate agency",
       "real estate developer",
 
-      // Volume filler
+      //! volume filler
       "cafe",
       "salon",
 
-      // Arabic variants
+      //! arabic variants
       "عيادة أسنان",
       "عزل مائي",
       "تسقيف",
